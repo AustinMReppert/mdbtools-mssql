@@ -114,7 +114,7 @@ main(int argc, char **argv)
 	/* Process options */
 	if (quote_char)
 		quote_char = escapes(quote_char);
-    else if (insert_dialect && !strcmp(insert_dialect, "postgres"))
+    else if (insert_dialect && (!strcmp(insert_dialect, "postgres") || !strcmp(insert_dialect, "mssql")))
         quote_char = g_strdup("'");
     else
 		quote_char = g_strdup("\"");

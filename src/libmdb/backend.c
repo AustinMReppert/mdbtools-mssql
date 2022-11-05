@@ -145,6 +145,30 @@ static const MdbBackendType mdb_sqlite_types[] = {
     [MDB_NUMERIC] = { .name = "INTEGER" },
 };
 
+static const MdbBackendType mdb_mssql_types[] = {
+    [MDB_BOOL] = { .name = "BIT" },
+    [MDB_BYTE] = { .name = "CHAR", .needs_byte_length = 1 },
+    [MDB_INT] = { .name = "SMALLINT" },
+    [MDB_LONGINT] = { .name = "INT" },
+    [MDB_MONEY] = { .name = "MONEY" },
+    [MDB_FLOAT] = { .name = "REAL" },
+    [MDB_DOUBLE] = { .name = "FLOAT" },
+    [MDB_DATETIME] = { .name = "SMALLDATETIME" },
+    [MDB_BINARY] = { .name = "VARBINARY", .needs_byte_length = 1 },
+    [MDB_TEXT] = { .name = "NVARCHAR", .needs_char_length = 1 },
+    [MDB_OLE] = { .name = "VARBIANRY(MAX)" },
+    [MDB_MEMO] = { .name = "NVARCHAR(MAX)" },
+    [MDB_REPID] = { .name = "UNIQUEIDENTIFIER" },
+    [MDB_NUMERIC] = { .name = "NUMERIC", .needs_precision = 1, .needs_scale = 1 },
+};
+
+static const MdbBackendType mdb_mssql_shortdate_type =
+        { .name = "date" };
+
+static const MdbBackendType mdb_mssql_serial_type =
+        { .name = "INT NOT NULL UNIQUE" };
+        // Identity(1,1) should probably be used here. But it makes it difficult to insert into.
+
 enum {
 	MDB_BACKEND_ACCESS = 1,
 	MDB_BACKEND_ORACLE,
@@ -152,6 +176,7 @@ enum {
 	MDB_BACKEND_POSTGRES,
 	MDB_BACKEND_MYSQL,
 	MDB_BACKEND_SQLITE,
+    MDB_BACKEND_MSSQL,
 };
 
 static void mdb_drop_backend(gpointer key, gpointer value, gpointer data);
@@ -176,7 +201,8 @@ static gchar *to_lower_case(const gchar *str) {
  * @return a pointer to the normalised version of the input string
  */
 gchar *mdb_normalise_and_replace(MdbHandle *mdb, gchar **str) {
-    gchar *normalised_str = mdb->default_backend->normalise_case(*str);
+    gchar *normalised_str = mdb->default_backend->normalise_case ? mdb->default_backend->normalise_case(*str) : g_strdup(*str);
+    //gchar *normalised_str = mdb->default_backend->normalise_case(*str);
     if (normalised_str != *str) {
         /* Free and replace the old string only and only if a new string was created at a different memory location
          * so that we can account for the case where strings a just passed through unchanged.
@@ -300,6 +326,23 @@ mdb_get_colbacktype_string(const MdbColumn *col)
 	}
 	return type->name;
 }
+
+const char *
+/**
+ * If the backend type is mdb_mssql_serial_type, then return mdb_mssql_serial_type without not null and unique.
+ * Otherwise, return mdb_get_colbacktype_string(col).
+*/
+mdb_get_colbacktype_string_2(const MdbColumn *col)
+{
+    const MdbBackendType *type = mdb_get_colbacktype(col);
+    if(type->name == mdb_mssql_serial_type.name) {
+        static TLS char buf[64];
+        snprintf(buf, sizeof(buf), "INT");
+        return buf;
+    }
+    return mdb_get_colbacktype_string(col);
+}
+
 int
 mdb_colbacktype_takes_length(const MdbColumn *col)
 {
@@ -414,6 +457,22 @@ void mdb_init_backends(MdbHandle *mdb)
 		NULL,
 		NULL,
 		quote_schema_name_rquotes_merge);
+    mdbi_register_backend2(mdb, "mssql",
+        MDB_SHEXP_DROPTABLE|MDB_SHEXP_CST_NOTNULL|MDB_SHEXP_CST_NOTEMPTY|MDB_SHEXP_COMMENTS|MDB_SHEXP_INDEXES|MDB_SHEXP_RELATIONS|MDB_SHEXP_DEFVALUES|MDB_SHEXP_BULK_INSERT,
+        mdb_mssql_types, &mdb_mssql_shortdate_type, &mdb_mssql_serial_type,
+        "current_date", "now()",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+        NULL,
+        "CREATE Table %s\n",
+        "DROP TABLE %s;\n",
+        "ALTER TABLE %s ADD CHECK (%s <>'');\n",
+        "--%s.%s: %s;\n",
+        NULL,
+        "Description of %s: %s\n",
+        NULL,
+        quote_schema_name_bracket_merge,
+        NULL);
 }
 
 MdbBackend *mdbi_register_backend2(MdbHandle *mdb, char *backend_name, guint32 capabilities,
@@ -596,7 +655,9 @@ mdb_print_indexes(FILE* outfile, MdbTableDef *table, char *dbnamespace)
 		backend = MDB_BACKEND_MYSQL;
 	} else if (!strcmp(mdb->backend_name, "oracle")) {
 		backend = MDB_BACKEND_ORACLE;
-	} else {
+	}  else if (!strcmp(mdb->backend_name, "mssql")) {
+        backend = MDB_BACKEND_MSSQL;
+    } else {
 		fprintf(outfile, "-- Indexes are not implemented for %s\n\n", mdb->backend_name);
 		return;
 	}
@@ -606,8 +667,46 @@ mdb_print_indexes(FILE* outfile, MdbTableDef *table, char *dbnamespace)
 
 	fprintf (outfile, "-- CREATE INDEXES ...\n");
 
-	quoted_table_name = mdb->default_backend->quote_schema_name(dbnamespace, table->name);
-	quoted_table_name = mdb->default_backend->normalise_case(quoted_table_name);
+    quoted_table_name = mdb->default_backend->quote_schema_name(dbnamespace, table->name);
+
+    if(mdb->default_backend->normalise_case) {
+        quoted_table_name = mdb->default_backend->normalise_case(quoted_table_name);
+    }
+
+    for (i=0;i<table->num_idxs;i++) {
+        idx = g_ptr_array_index (table->indices, i);
+        if (idx->index_type==2)
+            continue;
+
+        index_name = mdb_get_index_name(backend, table, idx);
+        switch (backend) {
+            case MDB_BACKEND_POSTGRES:
+                /* PostgreSQL index and constraint names are
+                                 * never namespaced in DDL (they are always
+                                 * created in same namespace as table), so
+                                 * omit namespace.
+                                 */
+                quoted_name = mdb->default_backend->quote_schema_name(NULL, index_name);
+                break;
+
+            default:
+                quoted_name = mdb->default_backend->quote_schema_name(dbnamespace, index_name);
+        }
+
+        quoted_name = mdb_normalise_and_replace(mdb, &quoted_name);
+
+        if (idx->index_type==1) {
+            if(backend == MDB_BACKEND_MSSQL) {
+                for (j=0;j<idx->num_keys;j++) {
+                    col=g_ptr_array_index(table->columns,idx->key_col_num[j]-1);
+                    quoted_name = mdb->default_backend->quote_schema_name(NULL, col->name);
+                    quoted_name = mdb_normalise_and_replace(mdb, &quoted_name);
+
+                    fprintf (outfile, "ALTER TABLE %s ALTER COLUMN %s %s NOT NULL;\n", quoted_table_name, quoted_name, mdb_get_colbacktype_string_2(col));
+                }
+            }
+        }
+    }
 
 	for (i=0;i<table->num_idxs;i++) {
 		idx = g_ptr_array_index (table->indices, i);
@@ -640,6 +739,9 @@ mdb_print_indexes(FILE* outfile, MdbTableDef *table, char *dbnamespace)
 				case MDB_BACKEND_MYSQL:
 					fprintf (outfile, "ALTER TABLE %s ADD PRIMARY KEY (", quoted_table_name);
 					break;
+                case MDB_BACKEND_MSSQL:
+                    fprintf (outfile, "ALTER TABLE %s ADD CONSTRAINT %s PRIMARY KEY (", quoted_table_name, quoted_name);
+                    break;
 			}
 		} else {
 			switch (backend) {
@@ -656,6 +758,12 @@ mdb_print_indexes(FILE* outfile, MdbTableDef *table, char *dbnamespace)
 						fprintf (outfile, " UNIQUE");
 					fprintf(outfile, " INDEX %s (", quoted_name);
 					break;
+                case MDB_BACKEND_MSSQL:
+                    fprintf(outfile, "CREATE");
+                    if (idx->flags & MDB_IDX_UNIQUE)
+                        fprintf (outfile, " UNIQUE");
+                    fprintf(outfile, " INDEX %s ON %s (", quoted_name, quoted_table_name);
+                    break;
 			}
 		}
 		g_free(quoted_name);
@@ -978,7 +1086,7 @@ generate_table_schema(FILE *outfile, MdbCatalogEntry *entry, char *dbnamespace, 
 			free(comment);
 		}
 	}
-	fputs(";\n", outfile);
+	fputs(";\n\n", outfile);
 
 	/* Add the constraints on columns */
 	for (i = 0; i < table->num_cols; i++) {

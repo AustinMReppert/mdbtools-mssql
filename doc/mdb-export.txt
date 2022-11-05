@@ -22,7 +22,7 @@ OPTIONS
   -q, --quote char              Use char to wrap text-like fields. Default is " (double quote).
   -X, --escape char             Use char to escape quoted characters within a field. Default is doubling.
   -e, --escape-invisible        Use C-style escaping for return (\\r), tab (\\t), line-feed (\\n), and back-slash (\\\\) characters. Default is to leave as they are.
-  -I, --insert backend          INSERT statements (instead of CSV). You must specify which SQL backend dialect to use. Allowed values are: access, sybase, oracle, postgres, mysql and sqlite.
+  -I, --insert backend          INSERT statements (instead of CSV). You must specify which SQL backend dialect to use. Allowed values are: access, mssql, sybase, oracle, postgres, mysql and sqlite.
   -N, --namespace prefix        Prefix identifiers with prefix.
   -S, --batch-size int          Size of insert batches on supported platforms.
   -D, --date-format fmt         Set the date format (see strftime(3) for details.

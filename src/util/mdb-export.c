@@ -248,6 +248,9 @@ main(int argc, char **argv)
 			if (counter % batch_size == 0) {
 				if (split_files) {
 					++cur_insert;
+                    if(cur_insert > MAX_INSERTS) {
+                        break;
+                    }
 					snprintf(out_file_num_pos, len + 1, "%d", cur_insert);
 					outfile = fopen(out_file_name, "w");
 				}

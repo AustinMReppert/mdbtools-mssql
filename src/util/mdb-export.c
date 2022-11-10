@@ -19,6 +19,8 @@
 #include "mdbtools.h"
 #include "mdbver.h"
 
+#include <stdio.h>
+
 #define EXPORT_BIND_SIZE 200000
 
 #define is_binary_type(x) (x==MDB_OLE || x==MDB_BINARY || x==MDB_REPID)
@@ -43,6 +45,7 @@ main(int argc, char **argv)
 	int header_row = 1;
 	int quote_text = 1;
 	int boolean_words = 0;
+	int split_files = 0;
 	int batch_size = 1000;
 	int escape_cr_lf = 0;
 	char *insert_dialect = NULL;
@@ -77,6 +80,7 @@ main(int argc, char **argv)
 		{"bin", 'b', 0, G_OPTION_ARG_STRING, &str_bin_mode, "Binary export mode", "strip|raw|octal|hex"},
 		{"boolean-words", 'B', 0, G_OPTION_ARG_NONE, &boolean_words, "Use TRUE/FALSE in Boolean fields (default is 0/1)", NULL},
 		{"version", 0, 0, G_OPTION_ARG_NONE, &print_mdbver, "Show mdbtools version and exit", NULL},
+		{"split-files", 'F', 0, G_OPTION_ARG_NONE, &split_files, "Split the inserts into seperate files named export-table-n.", NULL},
 		{NULL},
 	};
 	GError *error = NULL;
@@ -217,12 +221,37 @@ main(int argc, char **argv)
 		fputs(row_delimiter, outfile);
 	}
 
+	int cur_insert = 0;
+	size_t len = 0;;
+	// export-tablename-n
+	char* out_file_name = NULL;
+	size_t out_file_name_len = 0;
+	const int MAX_INSERTS = 500000;
+	char* out_file_num_pos = NULL;
+	if (split_files && insert_dialect) {
+		len = snprintf(NULL, 0, "%d", MAX_INSERTS);
+		out_file_name_len = 5 + 1 + strlen(table_name) + 1 + len + 1;
+		out_file_name = malloc(out_file_name_len);
+		memset(out_file_name, 0, out_file_name_len);
+		strcat(out_file_name, "export-");
+		strcat(out_file_name, table_name);
+		strcat(out_file_name, "-");
+		out_file_num_pos = out_file_name + strlen(out_file_name);
+		snprintf(out_file_num_pos, len + 1, "%d", cur_insert);
+	}
+
 	// TODO refactor this into functions
 	if (mdb->default_backend->capabilities & MDB_SHEXP_BULK_INSERT) {
 		//for efficiency do multi row insert on engines that support this
 		int counter = 0;
 		while (mdb_fetch_row(table)) {
 			if (counter % batch_size == 0) {
+				if (split_files) {
+					++cur_insert;
+					snprintf(out_file_num_pos, len + 1, "%d", cur_insert);
+					outfile = fopen(out_file_name, "w");
+				}
+
 				counter = 0; // reset to 0, prevent overflow on extremely large data sets.
 				char *quoted_name;
 				quoted_name = mdb->default_backend->quote_schema_name(namespace, table_name);
@@ -272,6 +301,9 @@ main(int argc, char **argv)
 			if (counter % batch_size == batch_size - 1) {
 				fputs(";", outfile);
 				fputs(row_delimiter, outfile);
+				if (split_files) {
+					fclose(outfile);
+				}
 			}
 			counter++;
 		}
@@ -279,6 +311,9 @@ main(int argc, char **argv)
 			//if our last row did not land on closing tag, close the stement here
 			fputs(";", outfile);
 			fputs(row_delimiter, outfile);
+			if (split_files) {
+				fclose(outfile);
+			}
 		}
 	} else {
 		while (mdb_fetch_row(table)) {
@@ -329,6 +364,10 @@ main(int argc, char **argv)
 			if (insert_dialect) fputs(");", outfile);
 			fputs(row_delimiter, outfile);
 		}
+	}
+
+	if(out_file_name) {
+		free(out_file_name);
 	}
 
 	/* free the memory used to bind */

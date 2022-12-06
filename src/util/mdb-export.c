@@ -46,6 +46,7 @@ main(int argc, char **argv)
 	int quote_text = 1;
 	int boolean_words = 0;
 	int split_files = 0;
+	int split_batches = 0;
 	int batch_size = 1000;
 	int escape_cr_lf = 0;
 	char *insert_dialect = NULL;
@@ -81,6 +82,7 @@ main(int argc, char **argv)
 		{"boolean-words", 'B', 0, G_OPTION_ARG_NONE, &boolean_words, "Use TRUE/FALSE in Boolean fields (default is 0/1)", NULL},
 		{"version", 0, 0, G_OPTION_ARG_NONE, &print_mdbver, "Show mdbtools version and exit", NULL},
 		{"split-files", 'F', 0, G_OPTION_ARG_NONE, &split_files, "Split the inserts into seperate files named export-table-n.", NULL},
+		{"split-batches", 'G', 0, G_OPTION_ARG_NONE, &split_batches, "Split the inserts into seperate batches with GO statements.", NULL},
 		{NULL},
 	};
 	GError *error = NULL;
@@ -248,9 +250,6 @@ main(int argc, char **argv)
 			if (counter % batch_size == 0) {
 				if (split_files) {
 					++cur_insert;
-                    if(cur_insert > MAX_INSERTS) {
-                        break;
-                    }
 					snprintf(out_file_num_pos, len + 1, "%d", cur_insert);
 					outfile = fopen(out_file_name, "w");
 				}
@@ -259,7 +258,11 @@ main(int argc, char **argv)
 				char *quoted_name;
 				quoted_name = mdb->default_backend->quote_schema_name(namespace, table_name);
 				quoted_name = mdb_normalise_and_replace(mdb, &quoted_name);
-				fprintf(outfile, "INSERT INTO %s (", quoted_name);
+				if(split_batches) {
+					fprintf(outfile, "GO;\nINSERT INTO %s (", quoted_name);
+				} else {
+					fprintf(outfile, "INSERT INTO %s (", quoted_name);
+				}
 				free(quoted_name);
 				for (i = 0; i < table->num_cols; i++) {
 					if (i > 0) fputs(", ", outfile);

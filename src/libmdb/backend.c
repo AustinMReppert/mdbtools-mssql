@@ -239,7 +239,7 @@ quote_generic(const gchar *value, gchar quote_char, gchar escape_char) {
 static gchar*
 quote_schema_name_bracket_merge(const gchar* schema, const gchar *name) {
 	if (schema)
-		return g_strconcat("[", schema, "_", name, "]", NULL);
+		return g_strconcat("[", schema, "].[", name, "]", NULL);
 	else
 		return g_strconcat("[", name, "]", NULL);
 }

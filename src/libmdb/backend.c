@@ -236,10 +236,19 @@ quote_generic(const gchar *value, gchar quote_char, gchar escape_char) {
 	*pr++ = '\0';
 	return result;
 }
+
+static gchar*
+quote_schema_name_mssql(const gchar* schema, const gchar *name) {
+	if (schema)
+		return g_strconcat("[", schema, "].[", name, "]", NULL);
+	else
+		return g_strconcat("[", name, "]", NULL);
+}
+
 static gchar*
 quote_schema_name_bracket_merge(const gchar* schema, const gchar *name) {
 	if (schema)
-		return g_strconcat("[", schema, "].[", name, "]", NULL);
+		return g_strconcat("[", schema, "_", name, "]", NULL);
 	else
 		return g_strconcat("[", name, "]", NULL);
 }
@@ -471,7 +480,7 @@ void mdb_init_backends(MdbHandle *mdb)
         NULL,
         "Description of %s: %s\n",
         NULL,
-        quote_schema_name_bracket_merge,
+        quote_schema_name_mssql,
         NULL);
 }
 

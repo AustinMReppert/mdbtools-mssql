@@ -1274,7 +1274,7 @@ mdb_print_col(FILE *outfile, gchar *col_val, int quote_text, int col_type, int b
 			putc('\\', outfile);
 			putc('\\', outfile);
 		} else
-			putc(*col_val++, outfile);
+			col_val++;//putc(*col_val++, outfile);
 	}
 	if (quoting)
 		fputs(quote_char, outfile);
